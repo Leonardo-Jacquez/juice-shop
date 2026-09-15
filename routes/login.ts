@@ -14,6 +14,19 @@ import * as models from '../models/index'
 import { type User } from '../data/types'
 import * as utils from '../lib/utils'
 
+// Fix for finding sqli-login-001 (appsec-ai repo): the query below used to build itself by
+// concatenating req.body.email/password straight into the SQL text, so an attacker-controlled
+// email like `' OR 1=1;--` closed the quote and rewrote the WHERE clause, bypassing the password
+// check entirely (see appsec-ai/reporting/findings/sqli-login-001/report.md). It now uses
+// Sequelize's own bind-parameter mechanism instead -- the same fix Juice Shop ships as the
+// CORRECT answer to its own "Login Admin" Find-It/Fix-It challenge
+// (data/static/codefixes/loginAdminChallenge_4_correct.ts). $1/$2 are placeholders resolved by
+// the database driver, never by string substitution, so user input can never alter the query
+// structure -- it can only ever be compared as a literal value. This comment sits above the
+// vuln-code-snippet block (not inside it) so it does not shift the block's internal line
+// numbers, which Juice Shop's own Find-It hint system (lib/codingChallenges.ts) counts relative
+// to "vuln-code-snippet start" -- test/api/vuln-code-snippet.test.ts asserts an exact relative
+// line number for the loginAdminChallenge hint.
 // vuln-code-snippet start loginAdminChallenge loginBenderChallenge loginJimChallenge
 export function login () {
   function afterLogin (user: User, res: Response, next: NextFunction) {
@@ -31,7 +44,7 @@ export function login () {
 
   return (req: Request, res: Response, next: NextFunction) => {
     verifyPreLoginChallenges(req) // vuln-code-snippet hide-line
-    models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${security.hash(req.body.password || '')}' AND deletedAt IS NULL`, { model: UserModel, plain: true }) // vuln-code-snippet vuln-line loginAdminChallenge loginBenderChallenge loginJimChallenge
+    models.sequelize.query('SELECT * FROM Users WHERE email = $1 AND password = $2 AND deletedAt IS NULL', { bind: [req.body.email || '', security.hash(req.body.password || '')], model: UserModel, plain: true }) // vuln-code-snippet vuln-line loginAdminChallenge loginBenderChallenge loginJimChallenge
       .then((authenticatedUser) => { // vuln-code-snippet neutral-line loginAdminChallenge loginBenderChallenge loginJimChallenge
         const user = utils.queryResultToJson(authenticatedUser)
         if (user.data?.id && user.data.totpSecret !== '') {
